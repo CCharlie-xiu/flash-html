@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{{TITLE}}</title>
+  <style>{{CSS}}</style>
+</head>
+<body data-layout="{{LAYOUT}}">
+  <div class="page">
+    <header class="mast">
+      <div>
+        <div class="mast-meta">
+          <span class="badge"><span class="pip"></span>{{LAYOUT_LABEL}}</span>
+          <span class="chip">openui · flash</span>
+          {{CHIPS}}
+        </div>
+        <h1>{{TITLE}}</h1>
+        {{LEDE}}
+      </div>
+      <div class="graphic" aria-hidden="true">{{MAST_SVG}}</div>
+    </header>
+    {{BAND}}
+    <section class="stage">{{BODY}}</section>
+    <footer class="foot">
+      <span class="logo-blob">
+        <svg viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="7" fill="#3b93f0"/><circle cx="6.2" cy="6.5" r="2.2" fill="#fff" opacity=".9"/></svg>
+        openui 题头 · 版式预装
+      </span>
+      <span>{{STAMP}}</span>
+    </footer>
+  </div>
+</body>
+</html>
