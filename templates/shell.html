@@ -30,5 +30,52 @@
       <span>{{STAMP}}</span>
     </footer>
   </div>
+<script>
+/* —— 行内实时校验：精确触发，就地反馈 ——
+   规则：空值不出结论；有值才校验；校验中先给 checking 再给结论。
+   信息出现在输入框正下方，不弹窗、不跳页、不抢焦点。 */
+(function () {
+  var RULES = [
+    { re: /^[\s]*$/,                    state: 'idle',     mark: '·', text: '' },
+    { re: /^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i, state: 'ok', mark: '✓', text: '邮箱格式正确' },
+    { re: /^[^@\s]+@[^@\s]*$/,          state: 'bad',    mark: '!', text: '缺少域名后缀，例如 name@example.com' },
+    { re: /.+/,                         state: 'bad',    mark: '!', text: '格式不正确，请检查是否包含 @ 与域名' }
+  ];
+  function check(v) {
+    for (var i = 0; i < RULES.length; i++) if (RULES[i].re.test(v)) return RULES[i];
+    return RULES[RULES.length - 1];
+  }
+  var fields = document.querySelectorAll('.field');
+  Array.prototype.forEach.call(fields, function (f) {
+    var input = f.querySelector('input');
+    var hint = f.querySelector('.hint');
+    var mk = f.querySelector('.mk');
+    var ht = f.querySelector('.ht');
+    if (!input || !hint) return;
+    var timer = null;
+
+    function apply(r) {
+      f.setAttribute('data-state', r.state);
+      mk.textContent = r.mark;
+      ht.textContent = r.text;
+    }
+
+    input.addEventListener('input', function () {
+      var v = input.value;
+      if (v.trim() === '') { apply(RULES[0]); return; }   // 空值不报错
+      // 校验中：先给一个中间态，避免结论跳变显得突兀
+      apply({ state: 'checking', mark: '·', text: '校验中…' });
+      clearTimeout(timer);
+      timer = setTimeout(function () { apply(check(v)); }, 260);
+    });
+
+    input.addEventListener('blur', function () {
+      if (input.value.trim() === '') { apply(RULES[0]); return; }
+      clearTimeout(timer);
+      apply(check(input.value));
+    });
+  });
+})();
+</script>
 </body>
 </html>
