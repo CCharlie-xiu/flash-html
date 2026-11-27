@@ -135,14 +135,17 @@ function renderBar(rows, { width = 720, barH = 22, gap = 10, labelW = 96 } = {})
       );
     } else {
       const w = (r.value / max) * plotW;
+      const pct = (r.value / rows.reduce((a, b) => a + (b.value || 0), 0)) * 100;
       const color = RAMP[Math.min(7, Math.round((r.value / max) * 7))];
       parts.push(
-        `<rect class="bar" x="${plotX}" y="${y}" width="${w}" height="${barH}" rx="4" fill="${color}"><title>${esc(
+        `<rect class="bar" data-idx="${i}" data-w="${w.toFixed(1)}" data-w-pct="${((pct / 100) * plotW).toFixed(1)}"
+          data-note="${esc(r.label)}：${fmtNum(r.value)} 个仓库，占全部 ${pct.toFixed(1)}%"
+          x="${plotX}" y="${y}" width="${w}" height="${barH}" rx="4" fill="${color}"><title>${esc(
           r.label
         )}：${fmtNum(r.value)}</title></rect>`
       );
       parts.push(
-        `<text class="lbl num" x="${plotX + w + 8}" y="${y + barH / 2 + 4}">${fmtNum(r.value)}</text>`
+        `<text class="lbl num" data-val="${fmtNum(r.value)}" data-pct="${pct.toFixed(1)}" x="${plotX + w + 8}" y="${y + barH / 2 + 4}">${fmtNum(r.value)}</text>`
       );
     }
     parts.push(
@@ -217,7 +220,8 @@ function renderDonut(rows, { width = 720, height = 220 } = {}) {
     const x2 = cx + r * Math.cos(a2);
     const y2 = cy + r * Math.sin(a2);
     parts.push(
-      `<path class="bar" d="M ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2}" fill="none" stroke="${
+      `<path class="bar" data-idx="${i}" data-value="${fmtNum(row.value)}" data-name="${esc(row.label)}" data-pct="${fmtNum(frac * 100)}"
+        d="M ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2}" fill="none" stroke="${
         CHART_COLORS[i % CHART_COLORS.length]
       }" stroke-width="${sw}"><title>${esc(row.label)}：${fmtNum(row.value)}（${fmtNum(
         frac * 100
@@ -226,7 +230,7 @@ function renderDonut(rows, { width = 720, height = 220 } = {}) {
     angle = a2;
   });
   parts.push(
-    `<text x="${cx}" y="${cy - 2}" text-anchor="middle" font-family="var(--font-mono)" font-size="19" font-weight="600" fill="var(--ink-900)">${fmtNum(
+    `<text class="donut-center-num" data-idx="-1" x="${cx}" y="${cy - 2}" text-anchor="middle" font-family="var(--font-mono)" font-size="19" font-weight="600" fill="var(--ink-900)">${fmtNum(
       total
     )}</text>`
   );
@@ -239,11 +243,11 @@ function renderDonut(rows, { width = 720, height = 220 } = {}) {
   rows.forEach((row, i) => {
     const y = ly + i * 30;
     parts.push(
-      `<rect x="${lx}" y="${y - 9}" width="9" height="9" rx="2" fill="${
+      `<rect data-idx="${i}" data-value="${fmtNum(row.value)}" data-name="${esc(row.label)}" data-pct="${fmtNum((row.value / total) * 100)}" x="${lx}" y="${y - 9}" width="9" height="9" rx="2" fill="${
         CHART_COLORS[i % CHART_COLORS.length]
       }"/>`
     );
-    parts.push(`<text class="series-label" x="${lx + 17}" y="${y}">${esc(row.label)}</text>`);
+    parts.push(`<text class="series-label" data-idx="${i}" data-value="${fmtNum(row.value)}" data-name="${esc(row.label)}" data-pct="${fmtNum((row.value / total) * 100)}" x="${lx + 17}" y="${y}">${esc(row.label)}</text>`);
     parts.push(
       `<text class="lbl num" x="${width - 96}" y="${y}" text-anchor="end">${fmtNum(row.value)}</text>`
     );
@@ -291,9 +295,20 @@ function renderChart(spec) {
           .join("")}</div>`
       : "";
 
-  return `<div class="block"><div class="chart">${
+  const total = rows.reduce((a, b) => a + (b.value || 0), 0);
+  const attrs = type === "donut"
+    ? `data-donut data-total="${total}" data-label="${esc(title)}" data-insight="（悬停查看明细）"`
+    : `data-bar data-insight="${esc(title)} · 点击柱条查看说明"`;
+  const segHtml = type === "donut" ? "" : `<div class="seg" role="tablist">
+    <button type="button" data-mode="num" aria-selected="true">数量</button>
+    <button type="button" data-mode="pct" aria-selected="false">占比 %</button>
+  </div>`;
+  const extra = type === "donut"
+    ? `<div class="insight"><span class="k">${esc(title)}</span><b>${fmtNum(total)}</b><span class="k">（悬停查看明细）</span></div>`
+    : `<div class="bar-note">${esc(title)} · 点击柱条查看说明</div>`;
+  return `<div class="block"><div class="chart" ${attrs}>${
     title ? `<div class="chart-title">${esc(title)}</div>` : ""
-  }${svg}${legend}</div></div>`;
+  }${segHtml}${svg}${legend}${extra}</div></div>`;
 }
 
 /* ============================================================
@@ -362,21 +377,122 @@ function renderSkeleton(spec) {
 
 /** 单向流程条：视线只向右推进，节点表达「到哪一步」 */
 function renderFlow(spec) {
-  const steps = spec.split(/[|｜]/).map((s) => s.trim()).filter(Boolean);
+  const steps = spec.split("|").map((s) => s.trim()).filter(Boolean);
   if (!steps.length) return "";
   const items = steps
     .map((s, i) => {
-      const [t, ...rest] = s.split(/[：:]/);
+      const [main, ...tail] = s.split("｜");
+      const [t, ...rest] = main.split(/[：:]/);
       const body = rest.join(":").trim();
+      const extra = tail.join("|").trim();
+      // extra 格式：标签1,标签2 详情正文（用第一个空格切；标签不含空格）
+      var sp = extra.indexOf(" ");
+      const tags = sp > 0 ? extra.slice(0, sp) : extra;
+      const detail = sp > 0 ? extra.slice(sp + 1) : "";
       const state = i === 0 ? "current" : "pending";
-      return `<li data-state="${state}">
+      return `<li data-state="${state}" data-nav
+        data-title="${esc(t)}"
+        data-body="${esc(body)}"
+        data-tags="${esc(tags || "")}"
+        data-detail="${esc(detail || body)}">
         <span class="fnode">${i + 1}</span>
         <span class="ftitle">${esc(t)}</span>
         ${body ? `<span class="fbody">${esc(body)}</span>` : ""}
       </li>`;
     })
     .join("");
-  return `<div class="block"><ol class="flow">${items}</ol></div>`;
+  return `<div class="block"><div class="flow-wrap" data-flow-wrap>
+    <ol class="flow" data-flow>${items}</ol>
+    <div class="flow-ctrl">
+      <button type="button" class="btn" data-step="prev">← 上一步</button>
+      <button type="button" class="btn primary" data-step="next">下一步 →</button>
+      <span class="pos">1 / ${items.length}</span>
+    </div>
+    <div class="flow-detail">
+      <div class="fd-title"></div>
+      <div class="fd-body"></div>
+      <div class="fd-tags"></div>
+    </div>
+  </div></div>`;
+}
+
+/** 可展开详情：标题|正文（正文内可用「；」分段，支持 **加粗**） */
+function renderExpand(spec) {
+  const seg = spec.split("|").map((s) => s.trim());
+  const title = seg[0] || "详情";
+  const body = seg.slice(1).join("|").trim();
+  const paras = body.split(/[；;]\s+/).filter(Boolean).map((p) => `<p>${inline(p)}</p>`).join("");
+  return `<div class="block"><details class="expand">
+    <summary><svg class="caret" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m6 3.5 4.5 4.5L6 12.5"/></svg>${inline(title)}</summary>
+    <div class="xbody">${paras || `<p>${inline(body)}</p>`}</div>
+  </details></div>`;
+}
+
+/** 锚点导航条：JS 自动映射正文 h2 */
+function renderNav() {
+  return `<div class="section-nav" aria-label="快速导航"></div>`;
+}
+
+/** 可筛选详情卡片区：@cards 标签1,标签2 / @card 名称|标签|摘要|详情|预览标题:内容;标题:内容 */
+function renderCards(spec) {
+  const tags = spec.split(/[,，]/).map((x) => x.trim()).filter(Boolean);
+  return `<div class="block" data-cardset><div class="filter-bar" data-filter>
+    <button type="button" class="pill" data-tag="all" aria-pressed="true">全部</button>
+    ${tags.map((t) => `<button type="button" class="pill" data-tag="${esc(t)}" aria-pressed="false">${esc(t)}</button>`).join("")}
+    <span class="cnt">—</span>
+  </div><div class="proj-grid"></div></div>`;
+}
+
+/** 单张卡片：名称|标签逗号分隔|摘要|详情|预览组（标题:内容;标题:内容） */
+function renderCardSpec(spec) {
+  const seg = spec.split("|").map((x) => x.trim());
+  const name = seg[0] || "项目";
+  const tags = (seg[1] || "").split(/[,，]/).map((x) => x.trim()).filter(Boolean);
+  const desc = seg[2] || "";
+  const detail = seg[3] || "";
+  const miniRaw = seg[4] || "";
+  let mini = "";
+  if (miniRaw) {
+    const views = miniRaw.split(/[；;]/).filter(Boolean).map((v, i) => {
+      const p = v.split(/[:：]/);
+      const t = p[0] || "视图" + (i + 1);
+      const body = p.slice(1).join(":") || "";
+      return `<div class="mini-view" data-view="${i}" data-on="${i === 0 ? "true" : "false"}"><pre>${esc(body)}</pre></div>`;
+    });
+    mini = `<div class="mini"><div class="mini-tabs">${miniRaw.split(/[；;]/).filter(Boolean).map((v, i) => {
+      const t = v.split(/[:：]/)[0] || "视图" + (i + 1);
+      return `<button type="button" data-view="${i}" aria-selected="${i === 0 ? "true" : "false"}">${esc(t)}</button>`;
+    }).join("")}</div>${views.join("")}</div>`;
+  }
+  return `<details class="proj-card" data-tags="${esc(tags.join(","))}">
+    <summary><span><span class="pc-name">${esc(name)}</span>
+      <span class="pc-desc">${inline(desc)}</span>
+      ${tags.length ? `<span class="pc-tags">${tags.map((t) => `<span>${esc(t)}</span>`).join("")}</span>` : ""}
+    </span><span class="pc-more">›</span></summary>
+    <div class="pc-body">${detail ? inline(detail) : ""}${mini}</div>
+  </details>`;
+}
+
+/** 可检索目录：@catalog 标题|条目:分类,条目:分类;分类2:... （实际用 @cat 行） */
+function renderCatalog(spec) {
+  const seg = spec.split("|").map((x) => x.trim());
+  const title = seg[0] || "目录";
+  return `<div class="block"><div class="catalog" data-catalog>
+    <div class="cat-head"><span class="cat-title">${esc(title)}</span><span class="cat-count">匹配 —</span></div>
+    <label class="search"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg>
+      <input type="search" placeholder="输入关键词实时检索…" aria-label="检索条目" /></label>
+    <div class="cat-pills"></div>
+    <div class="cat-items"></div>
+    <div class="empty" hidden>没有匹配的条目</div>
+  </div></div>`;
+}
+
+/** @cat 分类名|条目1,条目2,条目3 —— 填充最近的 catalog */
+function renderCatLine(spec) {
+  const seg = spec.split("|").map((x) => x.trim());
+  const cat = seg[0] || "其他";
+  const items = (seg[1] || "").split(/[,，]/).map((x) => x.trim()).filter(Boolean);
+  return `<div data-cat-line data-cat="${esc(cat)}" data-items="${esc(items.join(","))}" hidden></div>`;
 }
 
 /** 行内实时校验字段：标签|占位符|提示 */
@@ -392,7 +508,8 @@ function renderField(spec) {
   </div></div>`;
 }
 
-let src = fs.readFileSync(inPath, "utf8").replace(/^\uFEFF/, "").replace(/\r\n/g, "\n");
+const srcForCopy = fs.readFileSync(inPath, "utf8").replace(/^\uFEFF/, "").replace(/\r\n/g, "\n");
+let src = srcForCopy;
 const css = fs.readFileSync(path.join(ROOT, "templates", "kit.css"), "utf8");
 const shell = fs.readFileSync(path.join(ROOT, "templates", "shell.html"), "utf8");
 
@@ -408,6 +525,7 @@ function inline(text) {
   let s = esc(text);
   s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
   s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  s = s.replace(/==([^=]+)==/g, '<mark class="hl">$1</mark>');
   s = s.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, "<em>$1</em>");
   s = s.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
   return s;
@@ -470,15 +588,21 @@ function mdToBlocks(md, { asCards = false } = {}) {
       continue;
     }
 
-    if (/^@\s*(skeleton|chart|flow|field)\b/i.test(line)) {
+    if (/^@\s*(skeleton|chart|flow|field|expand|nav|cards|card|catalog|cat)\b/i.test(line)) {
       // 内容级指令：可在正文任意位置出现，输出顺序即视觉顺序
-      const m = line.match(/^@\s*(skeleton|chart|flow|field)\s*[:：]?\s*(.+?)\s*$/i);
+      const m = line.match(/^@\s*(skeleton|chart|flow|field|expand|nav|cards|card|catalog|cat)\s*[:：]?\s*(.*?)\s*$/i);
       const kind = m[1].toLowerCase();
-      const spec = m[2].trim();
+      const spec = (m[2] || "").trim();
       if (kind === "skeleton") blocks.push(renderSkeleton(spec));
       else if (kind === "chart") blocks.push(renderChart(spec));
       else if (kind === "flow") blocks.push(renderFlow(spec));
+      else if (kind === "expand") blocks.push(renderExpand(spec));
       else if (kind === "field") blocks.push(renderField(spec));
+      else if (kind === "nav") blocks.push(renderNav());
+      else if (kind === "cards") blocks.push(renderCards(spec));
+      else if (kind === "card") blocks.push(renderCardSpec(spec));
+      else if (kind === "catalog") blocks.push(renderCatalog(spec));
+      else if (kind === "cat") blocks.push(renderCatLine(spec));
       i++;
       continue;
     }
@@ -492,7 +616,8 @@ function mdToBlocks(md, { asCards = false } = {}) {
       } else if (level === 1) {
         blocks.push(`<div class="block"><p class="p"><strong>${inline(text)}</strong></p></div>`);
       } else {
-        blocks.push(`<div class="block"><div class="sec-title">${inline(text)}</div></div>`);
+        const sid = "sec-" + text.replace(/[^\w\u4e00-\u9fa5]+/g, "-").replace(/^-|-$/g, "").slice(0, 24);
+        blocks.push(`<div class="block"><h2 id="${sid}" class="sec-title">${inline(text)}</h2></div>`);
       }
       i++;
       continue;
@@ -506,12 +631,13 @@ function mdToBlocks(md, { asCards = false } = {}) {
       }
       const text = parts.join(" ").trim();
       let tone = "info";
-      if (/^(注意|警告|warn)/i.test(text)) tone = "warn";
-      else if (/^(结论|OK|ok|好消息)/i.test(text)) tone = "ok";
+      let body = text;
+      if (/^(注意|警告|warn)/i.test(text)) { tone = "warn"; body = text.replace(/^(注意|警告|warn)\s*[:：]?\s*/i, ""); }
+      else if (/^(结论|OK|ok|好消息)/i.test(text)) { tone = "ok"; body = text.replace(/^(结论|OK|ok|好消息)\s*[:：]?\s*/i, ""); }
       blocks.push(
         `<div class="block"><div class="callout ${tone}"><strong>${
           tone === "warn" ? "注意" : tone === "ok" ? "结论" : "说明"
-        }</strong>${inline(text)}</div></div>`
+        }</strong>${inline(body)}</div></div>`
       );
       continue;
     }
@@ -595,7 +721,7 @@ function mdToBlocks(md, { asCards = false } = {}) {
       !/^>\s?/.test(lines[i]) &&
       !/^\s*[-*]\s+/.test(lines[i]) &&
       !/^\s*\d+[.)]\s+/.test(lines[i]) &&
-      !/^@\s*(skeleton|chart|flow|field)\b/i.test(lines[i]) &&
+      !/^@\s*(skeleton|chart|flow|field|expand|nav|cards|card|catalog|cat)\b/i.test(lines[i]) &&
       !(lines[i].includes("|") && i + 1 < lines.length && isTableSep(lines[i + 1]))
     ) {
       buf.push(lines[i]);
@@ -626,8 +752,8 @@ while (true) {
   if (key === "layout") layout = val.toLowerCase();
   else if (key === "chip") chips.push(val);
   else if (key === "band") {
-    const [k, ...rest] = val.split(/[|｜]/);
-    band.push({ k: (k || "").trim(), v: rest.join("|").trim() || "—" });
+    const seg = val.split(/[|｜]/).map((x) => x.trim());
+    band.push({ k: seg[0] || "", v: seg[1] || "—", jump: seg[2] || "", count: seg[3] === "count" });
   }
   src = src.slice(m[0].length);
 }
@@ -686,7 +812,13 @@ if (layout === "compare" || layout === "split") {
 
 const bandHtml = band.length
   ? `<div class="band">${band
-      .map((b) => `<div class="cell"><div class="k">${esc(b.k)}</div><div class="v">${esc(b.v)}</div></div>`)
+      .map((b) => {
+        const jump = b.jump ? ` data-jump="${esc(b.jump)}"` : "";
+        const vHtml = b.count
+          ? `<div class="v count" data-to="${esc(String(b.v).replace(/[^0-9.]/g, ""))}">${esc(b.v)}</div>`
+          : `<div class="v">${esc(b.v)}</div>`;
+        return `<div class="cell"${jump}><div class="k">${esc(b.k)}</div>${vHtml}</div>`;
+      })
       .join("")}</div>`
   : "";
 
@@ -710,7 +842,8 @@ const html = shell
   .replaceAll("{{BAND}}", bandHtml)
   .replaceAll("{{BODY}}", body)
   .replaceAll("{{CSS}}", css)
-  .replaceAll("{{STAMP}}", stampHtml);
+  .replaceAll("{{STAMP}}", stampHtml)
+  .replaceAll("{{SOURCE_MD}}", srcForCopy.replace(/<\/script/gi, "<\\/script"));
 
 fs.mkdirSync(path.dirname(outPath), { recursive: true });
 fs.writeFileSync(outPath, html, "utf8");

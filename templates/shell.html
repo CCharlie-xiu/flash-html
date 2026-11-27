@@ -7,6 +7,35 @@
   <style>{{CSS}}</style>
 </head>
 <body data-layout="{{LAYOUT}}">
+  <div class="progress" aria-hidden="true"><i></i></div>
+  <div class="toolbar" role="toolbar" aria-label="页面工具">
+    <button type="button" class="btn" data-act="source" title="预览本页 Markdown 源码">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="m5.5 4.5-3 3.5 3 3.5M10.5 4.5l3 3.5-3 3.5M9 3l-2 10"/></svg>
+      源码
+    </button>
+    <button type="button" class="btn" data-act="copy" title="复制本页 Markdown 源码">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5V4A1.5 1.5 0 0 0 9 2.5H4A1.5 1.5 0 0 0 2.5 4v5A1.5 1.5 0 0 0 4 10.5h1.5"/></svg>
+      复制
+    </button>
+    <span class="sep"></span>
+    <button type="button" class="btn" data-act="png" title="导出整页 PNG 图片">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="2.5" width="12" height="11" rx="2"/><circle cx="5.5" cy="6" r="1.2"/><path d="M2.5 11.5 6 8.5l2.5 2 2-1.8 3 2.8"/></svg>
+      图片
+    </button>
+    <button type="button" class="btn primary" data-act="pdf" title="打印 / 另存为 PDF">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4 5.5V2.5h8v3"/><rect x="2.5" y="5.5" width="11" height="5" rx="1.5"/><path d="M5 10.5v3h6v-3"/></svg>
+      PDF
+    </button>
+  </div>
+  <div class="modal" id="source-modal" role="dialog" aria-modal="true" aria-label="Markdown 源码预览">
+    <div class="modal-panel">
+      <div class="modal-head">
+        <strong>Markdown 源码 · {{TITLE}}</strong>
+        <button type="button" class="x" data-act="close-source" aria-label="关闭">✕</button>
+      </div>
+      <pre class="modal-body" id="source-body"></pre>
+    </div>
+  </div>
   <div class="page">
     <header class="mast">
       <div>
@@ -30,7 +59,12 @@
       <span>{{STAMP}}</span>
     </footer>
   </div>
+<script type="application/json" id="flash-source">{{SOURCE_MD}}</script>
 <script>
+window.__FLASH_MD__ = (function () {
+  var el = document.getElementById('flash-source');
+  return el ? el.textContent : '';
+})();
 /* —— 行内实时校验：精确触发，就地反馈 ——
    规则：空值不出结论；有值才校验；校验中先给 checking 再给结论。
    信息出现在输入框正下方，不弹窗、不跳页、不抢焦点。 */
@@ -74,6 +108,450 @@
       clearTimeout(timer);
       apply(check(input.value));
     });
+  });
+})();
+
+/* ============================================================
+   v3 交互层：进度 / 源码弹窗 / 复制 / PNG / PDF /
+   锚点导航 / KPI 跳转与计数 / 时间线 / 图表 / 筛选 / 目录检索
+   ============================================================ */
+(function () {
+  var root = document.documentElement;
+  var toolbar = document.querySelector('.toolbar');
+  if (!toolbar) return;
+  var busy = false;
+
+  function state(btn, s) {
+    btn.setAttribute('data-state', s);
+    if (s === 'done') setTimeout(function () { btn.removeAttribute('data-state'); }, 1400);
+  }
+  function saveBlob(blob, name) {
+    var a = document.createElement('a');
+    var url = URL.createObjectURL(blob);
+    a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+  }
+  function baseName() {
+    return (document.title || 'flash-html').replace(/[\\/:*?"<>|]/g, '_');
+  }
+  function goTo(id) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+  function smoothTo(el) {
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  /* —— 1a. 阅读进度条 —— */
+  var bar = document.querySelector('.progress > i');
+  function onScroll() {
+    if (!bar) return;
+    var h = document.documentElement;
+    var max = h.scrollHeight - h.clientHeight;
+    bar.style.width = (max > 0 ? Math.min(100, (h.scrollTop / max) * 100) : 0) + '%';
+  }
+  window.addEventListener('scroll', onScroll, { passive: true });
+  window.addEventListener('resize', onScroll);
+  onScroll();
+
+  /* —— 1b. 源码弹窗 —— */
+  var modal = document.getElementById('source-modal');
+  var sourceBody = document.getElementById('source-body');
+  function openSource() {
+    if (!modal) return;
+    if (sourceBody) sourceBody.textContent = window.__FLASH_MD__ || '';
+    modal.setAttribute('open', '');
+    document.body.style.overflow = 'hidden';
+  }
+  function closeSource() {
+    if (!modal) return;
+    modal.removeAttribute('open');
+    document.body.style.overflow = '';
+  }
+  if (modal) {
+    modal.addEventListener('click', function (e) {
+      if (e.target === modal || e.target.closest('[data-act="close-source"]')) closeSource();
+    });
+  }
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') closeSource();
+  });
+
+  toolbar.addEventListener('click', function (ev) {
+    var btn = ev.target.closest('button[data-act]');
+    if (!btn || busy) return;
+    var act = btn.getAttribute('data-act');
+
+    if (act === 'source') { openSource(); return; }
+    if (act === 'pdf') { window.print(); return; }
+
+    if (act === 'copy') {
+      var src = window.__FLASH_MD__ || '';
+      var done = function () { state(btn, 'done'); };
+      if (!src) { state(btn, 'busy'); setTimeout(function () { btn.removeAttribute('data-state'); }, 1200); return; }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(src).then(done, function () { fallbackCopy(src, done); });
+      } else fallbackCopy(src, done);
+      return;
+    }
+
+    if (act === 'png') {
+      busy = true; state(btn, 'busy');
+      var page = document.querySelector('.page');
+      var w = Math.ceil(page.scrollWidth), h = Math.ceil(page.scrollHeight);
+      var css = document.querySelector('style') ? document.querySelector('style').textContent : '';
+      var clone = page.cloneNode(true);
+      // 导出前剔除交互控件：它们会让 foreignObject 里的 Chrome 渲染卡死
+      ['.toolbar', '.progress', '.modal', '.section-nav', '.seg', '.filter-bar',
+       '.flow-ctrl', '.search', '.cat-pills', '.mini', '.count'].forEach(function (sel) {
+        Array.prototype.slice.call(clone.querySelectorAll(sel)).forEach(function (n) { n.remove(); });
+      });
+      clone.style.margin = '0'; clone.style.width = w + 'px';
+      var xhtml = '<div xmlns="http://www.w3.org/1999/xhtml"><style>' + css +
+        '</style><div class="page">' + clone.innerHTML + '</div></div>';
+      var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h +
+        '" viewBox="0 0 ' + w + ' ' + h + '"><foreignObject width="100%" height="100%">' +
+        xhtml + '</foreignObject></svg>';
+      // data URL（blob URL 会污染 canvas）
+      var url = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+      var img = new Image();
+      img.onload = function () {
+        try {
+          var dpr = Math.min(2, window.devicePixelRatio || 1);
+          var cv = document.createElement('canvas');
+          cv.width = w * dpr; cv.height = h * dpr;
+          var ctx = cv.getContext('2d');
+          ctx.scale(dpr, dpr);
+          ctx.fillStyle = '#fafbfc'; ctx.fillRect(0, 0, w, h);
+          ctx.drawImage(img, 0, 0);
+          cv.toBlob(function (b) {
+            if (b) { saveBlob(b, baseName() + '.png'); state(btn, 'done'); }
+            busy = false; btn.removeAttribute('data-state');
+          }, 'image/png');
+        } catch (e) {
+          busy = false; btn.removeAttribute('data-state');
+          alert('图片导出失败：' + e.message);
+        }
+      };
+      img.onerror = function () {
+        busy = false; btn.removeAttribute('data-state');
+        alert('图片导出失败，请改用 PDF 按钮。');
+      };
+      img.src = url;
+    }
+  });
+
+  function fallbackCopy(src, done) {
+    var ta = document.createElement('textarea');
+    ta.value = src; document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); done(); } catch (e) {}
+    ta.remove();
+  }
+
+  /* —— 2. 锚点导航：自动映射 h2，滚动高亮 —— */
+  var nav = document.querySelector('.section-nav');
+  if (nav) {
+    var heads = Array.prototype.slice.call(document.querySelectorAll('.stage h2[id]'));
+    heads.forEach(function (h, i) {
+      var a = document.createElement('a');
+      a.href = '#' + h.id;
+      a.innerHTML = '<span class="dot"></span>' + h.textContent.replace(/<[^>]+>/g, '');
+      a.addEventListener('click', function (e) { e.preventDefault(); goTo(h.id); });
+      nav.appendChild(a);
+    });
+    if (!heads.length) nav.style.display = 'none';
+    var links = Array.prototype.slice.call(nav.querySelectorAll('a'));
+    function syncNav() {
+      var cur = '';
+      heads.forEach(function (h) {
+        if (h.getBoundingClientRect().top <= 90) cur = h.id;
+      });
+      links.forEach(function (a) {
+        a.setAttribute('aria-current', a.getAttribute('href') === '#' + cur ? 'true' : 'false');
+      });
+    }
+    window.addEventListener('scroll', syncNav, { passive: true });
+    syncNav();
+  }
+
+  /* —— 3. KPI：点击跳转 + 数字计数 —— */
+  var bandCells = Array.prototype.slice.call(document.querySelectorAll('.band .cell[data-jump]'));
+  bandCells.forEach(function (cell) {
+    var target = cell.getAttribute('data-jump');
+    cell.setAttribute('tabindex', '0');
+    cell.setAttribute('role', 'link');
+    var jump = function () { goTo(target); };
+    cell.addEventListener('click', jump);
+    cell.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); jump(); }
+    });
+    if (!cell.querySelector('.go')) {
+      var g = document.createElement('span');
+      g.className = 'go'; g.textContent = '→';
+      cell.appendChild(g);
+    }
+  });
+  // 计数动画：HTML 已写终值，JS 接管后从 0 快速滚到终值（无 JS 时也能看）
+  var counters = Array.prototype.slice.call(document.querySelectorAll('.count[data-to]'));
+  if (counters.length && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    counters.forEach(function (el) {
+      var to = Number(el.getAttribute('data-to'));
+      if (!isFinite(to)) return;
+      var suffix = el.getAttribute('data-suffix') || '';
+      var start = performance.now(), dur = 620;
+      function tick(now) {
+        var p = Math.min(1, (now - start) / dur);
+        var ease = 1 - Math.pow(1 - p, 3);
+        el.textContent = Math.round(to * ease) + suffix;
+        if (p < 1) requestAnimationFrame(tick);
+      }
+      requestAnimationFrame(tick);
+    });
+  }
+
+  /* —— 4. 时间线：节点 / 上一步下一步 / 联动详情 —— */
+  document.querySelectorAll('.flow[data-flow]').forEach(function (flow) {
+    var items = Array.prototype.slice.call(flow.querySelectorAll('li'));
+    var detail = flow.parentNode.querySelector('.flow-detail');
+    var ctrl = flow.parentNode.querySelector('.flow-ctrl');
+    var prev = ctrl && ctrl.querySelector('[data-step="prev"]');
+    var next = ctrl && ctrl.querySelector('[data-step="next"]');
+    var pos = ctrl && ctrl.querySelector('.pos');
+    var cur = 0;
+    function render() {
+      items.forEach(function (li, i) {
+        li.setAttribute('data-state', i < cur ? 'done' : i === cur ? 'current' : 'pending');
+        li.setAttribute('tabindex', '0');
+        li.setAttribute('role', 'button');
+      });
+      if (pos) pos.textContent = (cur + 1) + ' / ' + items.length;
+      if (prev) prev.disabled = cur === 0;
+      if (next) next.disabled = cur === items.length - 1;
+      if (detail) {
+        var li = items[cur];
+        var dTitle = detail.querySelector('.fd-title');
+        var dBody = detail.querySelector('.fd-body');
+        var dTags = detail.querySelector('.fd-tags');
+        if (dTitle) dTitle.textContent = li.getAttribute('data-title') || '';
+        if (dBody) dBody.textContent = li.getAttribute('data-detail') || li.getAttribute('data-body') || '';
+        if (dTags) {
+          var tags = (li.getAttribute('data-tags') || '').split(/[,，]/).filter(Boolean);
+          dTags.innerHTML = tags.map(function (t) { return '<span>' + t + '</span>'; }).join('');
+        }
+      }
+    }
+    items.forEach(function (li, i) {
+      li.addEventListener('click', function () { cur = i; render(); });
+      li.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); cur = i; render(); }
+      });
+    });
+    if (prev) prev.addEventListener('click', function () { if (cur > 0) { cur--; render(); } });
+    if (next) next.addEventListener('click', function () { if (cur < items.length - 1) { cur++; render(); } });
+    render();
+  });
+
+  /* —— 5a. 环形图：扇区/图例联动 —— */
+  document.querySelectorAll('.chart[data-donut]').forEach(function (chart) {
+    var items = Array.prototype.slice.call(chart.querySelectorAll('[data-idx]'));
+    var center = chart.querySelector('.donut-center-num');
+    var insight = chart.querySelector('.insight');
+    var total = Number(chart.getAttribute('data-total')) || 0;
+    var defLabel = chart.getAttribute('data-label') || '合计';
+    var defInsight = chart.getAttribute('data-insight') || '';
+    function clear() {
+      items.forEach(function (el) { el.classList.remove('dim', 'hot'); });
+      if (center) center.textContent = String(total);
+      if (insight) insight.innerHTML = '<span class="k">' + defLabel + '</span><b>' + total + '</b>' + defInsight;
+    }
+    function focus(i) {
+      items.forEach(function (el) {
+        var on = Number(el.getAttribute('data-idx')) === i;
+        el.classList.toggle('dim', !on);
+        el.classList.toggle('hot', on);
+      });
+      var el = items.filter(function (x) { return Number(x.getAttribute('data-idx')) === i; })[0];
+      if (!el) return;
+      var v = el.getAttribute('data-value') || '';
+      var label = el.getAttribute('data-name') || '';
+      var pct = el.getAttribute('data-pct') || '';
+      if (center) center.textContent = pct ? pct + '%' : v;
+      if (insight) insight.innerHTML = '<span class="k">' + label + '</span><b>' + v + '</b> · 占比 <b>' + pct + '%</b>';
+    }
+    items.forEach(function (el) {
+      var i = Number(el.getAttribute('data-idx'));
+      el.addEventListener('mouseenter', function () { focus(i); });
+      el.addEventListener('mouseleave', clear);
+      el.addEventListener('click', function () { focus(i); });
+    });
+    clear();
+  });
+
+  /* —— 5b. 柱状图：数量/占比切换 + 柱条高亮 —— */
+  document.querySelectorAll('.chart[data-bar]').forEach(function (chart) {
+    var seg = chart.querySelector('.seg');
+    var bars = Array.prototype.slice.call(chart.querySelectorAll('.bar[data-idx]'));
+    var note = chart.querySelector('.bar-note');
+    var defNote = chart.getAttribute('data-insight') || '';
+    var mode = 'num';
+    function apply() {
+      bars.forEach(function (b) {
+        var w = mode === 'pct' ? b.getAttribute('data-w-pct') : b.getAttribute('data-w');
+        if (w != null) b.setAttribute('width', w);
+      });
+      var nums = Array.prototype.slice.call(chart.querySelectorAll('.lbl.num[data-val]'));
+      nums.forEach(function (n) {
+        n.textContent = mode === 'pct' ? (n.getAttribute('data-pct') + '%') : n.getAttribute('data-val');
+      });
+      if (seg) {
+        seg.querySelectorAll('button').forEach(function (b) {
+          b.setAttribute('aria-selected', b.getAttribute('data-mode') === mode ? 'true' : 'false');
+        });
+      }
+      if (note && !note.dataset.picked) note.textContent = defNote;
+    }
+    if (seg) {
+      seg.addEventListener('click', function (e) {
+        var b = e.target.closest('button[data-mode]');
+        if (!b) return;
+        mode = b.getAttribute('data-mode');
+        apply();
+      });
+    }
+    bars.forEach(function (b) {
+      b.addEventListener('click', function () {
+        bars.forEach(function (x) { x.classList.remove('hot', 'dim'); });
+        b.classList.add('hot');
+        if (note) {
+          note.dataset.picked = '1';
+          note.textContent = b.getAttribute('data-note') || '';
+        }
+      });
+    });
+    apply();
+  });
+
+  /* —— 6. 可筛选卡片区 —— */
+  // 收集散落的 @card 到最近的 @cards 网格
+  document.querySelectorAll('[data-cardset]').forEach(function (set) {
+    var grid = set.querySelector('.proj-grid');
+    if (!grid) return;
+    var next = set.nextElementSibling;
+    while (next && next.classList && next.classList.contains('proj-card')) {
+      var take = next; next = next.nextElementSibling;
+      grid.appendChild(take);
+    }
+  });
+  document.querySelectorAll('.filter-bar[data-filter]').forEach(function (fb) {
+    var wrap = fb.parentNode;
+    var cards = Array.prototype.slice.call(wrap.querySelectorAll('.proj-card'));
+    var pills = Array.prototype.slice.call(fb.querySelectorAll('.pill'));
+    var cnt = fb.querySelector('.cnt');
+    var active = 'all';
+    function apply() {
+      var shown = 0;
+      cards.forEach(function (c) {
+        var tags = (c.getAttribute('data-tags') || '').split(/[,，]/).map(function (x) { return x.trim(); });
+        var ok = active === 'all' || tags.indexOf(active) >= 0;
+        c.hidden = !ok;
+        if (ok) shown++;
+      });
+      if (cnt) cnt.textContent = shown + ' / ' + cards.length;
+    }
+    pills.forEach(function (p) {
+      p.addEventListener('click', function () {
+        active = p.getAttribute('data-tag') || 'all';
+        pills.forEach(function (x) { x.setAttribute('aria-pressed', x === p ? 'true' : 'false'); });
+        apply();
+      });
+    });
+    apply();
+  });
+  // 迷你预览切换
+  document.querySelectorAll('.mini').forEach(function (m) {
+    m.addEventListener('click', function (e) {
+      var b = e.target.closest('.mini-tabs button[data-view]');
+      if (!b) return;
+      var key = b.getAttribute('data-view');
+      m.querySelectorAll('.mini-tabs button').forEach(function (x) {
+        x.setAttribute('aria-selected', x === b ? 'true' : 'false');
+      });
+      m.querySelectorAll('.mini-view').forEach(function (v) {
+        v.setAttribute('data-on', v.getAttribute('data-view') === key ? 'true' : 'false');
+      });
+    });
+  });
+
+  /* —— 7. 可检索目录面板 —— */
+  // @cat 行归属到它前面最近的 .catalog（catalog 嵌在 .block 内）
+  var lastCatalog = null;
+  Array.prototype.slice.call(document.querySelectorAll('.stage > *')).forEach(function (node) {
+    if (node.hasAttribute && node.hasAttribute('data-cat-line')) {
+      if (!lastCatalog) return;
+      var pills = lastCatalog.querySelector('.cat-pills');
+      var items = lastCatalog.querySelector('.cat-items');
+      if (!pills || !items) return;
+      var category = node.getAttribute('data-cat') || '其他';
+      var names = (node.getAttribute('data-items') || '').split(',').filter(Boolean);
+      var pill = document.createElement('button');
+      pill.type = 'button'; pill.className = 'cat-chip';
+      pill.setAttribute('data-cat', category);
+      pill.setAttribute('aria-pressed', 'false');
+      pill.textContent = category;
+      pills.appendChild(pill);
+      names.forEach(function (n) {
+        var chip = document.createElement('span');
+        chip.className = 'item';
+        chip.setAttribute('data-cat', category);
+        chip.setAttribute('data-name', n);
+        chip.innerHTML = n + ' <span class="tag">' + category + '</span>';
+        items.appendChild(chip);
+      });
+      node.remove();
+      return;
+    }
+    var nested = node.querySelector && node.querySelector('.catalog');
+    if (nested) lastCatalog = nested;
+  });
+  document.querySelectorAll('.catalog').forEach(function (cat) {
+    var input = cat.querySelector('.search input');
+    var chips = Array.prototype.slice.call(cat.querySelectorAll('.cat-chip'));
+    var items = Array.prototype.slice.call(cat.querySelectorAll('.item'));
+    var cnt = cat.querySelector('.cat-count');
+    var empty = cat.querySelector('.empty');
+    var activeCat = 'all';
+    function apply() {
+      var q = (input ? input.value : '').trim().toLowerCase();
+      var shown = 0;
+      items.forEach(function (it) {
+        var hay = (it.textContent + ' ' + (it.getAttribute('data-name') || '')).toLowerCase();
+        var catOk = activeCat === 'all' || it.getAttribute('data-cat') === activeCat;
+        var ok = catOk && (!q || hay.indexOf(q) >= 0);
+        it.hidden = !ok;
+        if (ok) shown++;
+      });
+      if (cnt) cnt.textContent = '匹配 ' + shown + ' / ' + items.length;
+      if (empty) empty.hidden = shown !== 0;
+    }
+    if (input) input.addEventListener('input', apply);
+    chips.forEach(function (c) {
+      c.addEventListener('click', function () {
+        activeCat = c.getAttribute('data-cat') || 'all';
+        chips.forEach(function (x) { x.setAttribute('aria-pressed', x === c ? 'true' : 'false'); });
+        apply();
+      });
+    });
+    // 点击条目芯片：若有对应锚点则跳转
+    items.forEach(function (it) {
+      it.addEventListener('click', function () {
+        var t = it.getAttribute('data-jump');
+        if (t) goTo(t);
+      });
+    });
+    apply();
   });
 })();
 </script>
