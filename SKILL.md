@@ -1,14 +1,14 @@
 ---
 name: flash-html
 description: >-
-  用户提问后极速出 openui 题头/版式/装饰图 HTML 页。正文写普通 Markdown；版式用一行
+  用户提问后极速出 wuch-ai-ui 题头/版式/装饰图 HTML 页。正文写普通 Markdown；版式用一行
   @layout 选型（不要 JSON、不要自写 CSS）。Use when 快速展示 / flash-html /
-  秒出 HTML / openui 回答页 / 预装版式展示.
+  秒出 HTML / wuch-ai-ui 回答页 / 预装版式展示.
 ---
 
 # flash-html
 
-**纯 MD 只管文字。题头、版式、图形已预装（openui 冷白双表面 + 深松绿）。**
+**纯 MD 只管文字。题头、版式、图形已预装（wuch-ai-ui 冷白双表面 + 深松绿）。**
 
 ## 2 步
 

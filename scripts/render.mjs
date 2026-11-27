@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * flash-html — free Markdown + one-line @layout → openui page.
+ * flash-html — free Markdown + one-line @layout → wuch-ai-ui page.
  * Usage: node render.mjs <answer.md> [out.html] [--open]
  */
 import fs from "node:fs";

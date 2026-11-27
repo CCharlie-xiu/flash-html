@@ -1,5 +1,5 @@
 @layout split
-@chip openui
+@chip wuch-ai-ui
 @band 版式|图文页
 @band 内容|Markdown
 @band 样式|预装

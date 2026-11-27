@@ -1,6 +1,6 @@
 # flash-html
 
-极速 Markdown → openui 预装版式 HTML。
+极速 Markdown → wuch-ai-ui 预装版式 HTML。
 
 ## Install
 
